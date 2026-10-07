@@ -1,9 +1,9 @@
 # macro-lang &mdash; API Reference
 
 > Complete reference for every public item in `macro-lang`, with examples.
-> **Status: pre-1.0 (0.2).** The surface below is the core the 1.0 contract will
-> be cut from; it may still change in a minor release before `1.0.0`. See
-> [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
+> **Status: stable (1.0).** The surface below is the `1.0` contract; it follows
+> [Semantic Versioning](#stability) and will not change in a breaking way before
+> `2.0`. See [`../dev/ROADMAP.md`](../dev/ROADMAP.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -83,7 +83,7 @@ The crate is `#![forbid(unsafe_code)]`, `no_std`-compatible (needs only
 
 ```toml
 [dependencies]
-macro-lang = "0.2"
+macro-lang = "1"
 token-lang = "1"
 intern-lang = "1"
 ```
@@ -331,6 +331,7 @@ assert_eq!(Tree::token('x', Span::new(2, 3)).span(), Span::new(2, 3));
 ## `Pattern`
 
 ```rust,ignore
+#[non_exhaustive]
 pub enum Pattern<K> {
     Token(K),
     Group { open: K, close: K, body: Vec<Pattern<K>> },
@@ -355,6 +356,10 @@ the invocation left to right; it must consume the whole invocation.
   ([`MacroError::EmptyRepetition`](#macroerror)), and a
   [`Kleene::ZeroOrOne`](#kleene) repetition cannot have a separator
   ([`MacroError::OptionalSeparator`](#macroerror)).
+
+`#[non_exhaustive]`: new kinds of pattern element may be added in a minor
+release. Constructing a variant is unaffected; a `match` on `Pattern` needs a
+wildcard arm.
 
 **Trait implementations:** `Clone`, `Debug`.
 
@@ -425,6 +430,7 @@ assert!(matches!(
 ## `Fragment`
 
 ```rust,ignore
+#[non_exhaustive]
 pub enum Fragment<K> {
     Tree,
     Kind(fn(&K) -> bool),
@@ -443,6 +449,9 @@ language supplies.
 - `Kind(test)` — a single token (never a group) for which `test(&kind)` returns
   `true`. Covers specifiers such as `ident` and `literal`:
   `Fragment::Kind(Kind::is_ident)`.
+
+`#[non_exhaustive]`: new fragment kinds may be added in a minor release; a
+`match` on `Fragment` needs a wildcard arm.
 
 **Trait implementations:** `Clone`, `Copy`, `Debug`.
 
@@ -538,6 +547,7 @@ assert!(!Kleene::ZeroOrOne.allows(2));
 ## `Template`
 
 ```rust,ignore
+#[non_exhaustive]
 pub enum Template<K> {
     Token { token: Token<K>, ctx: Context },
     Group { open: Token<K>, close: Token<K>, body: Vec<Template<K>> },
@@ -564,6 +574,10 @@ in order when the rule matches.
   with `separator` written between repetitions. The separator is marked as a
   token defined in the root context. The iteration count comes from the
   metavariables used inside (see [lockstep](#repetition-depth-and-lockstep)).
+
+`#[non_exhaustive]`: new kinds of template element may be added in a minor
+release. Constructing a variant is unaffected; a `match` on `Template` needs a
+wildcard arm.
 
 **Trait implementations:** `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash`.
 
@@ -856,8 +870,9 @@ macros up by name; that is the expansion driver's job (see
 [writing a front end](#guide-writing-a-front-end)).
 
 **Trait implementations:** `Default` (same as [`new`](#expandernew)), `Debug`
-(prints the limit and the number of contexts and expansions recorded), `Send` and
-`Sync` (where `K` is).
+(a summary: the limit and the number of contexts and expansions recorded; the
+exact format is not part of the stability contract), `Send` and `Sync` (where
+`K` is).
 
 ### `Expander::DEFAULT_LIMIT`
 
@@ -886,8 +901,7 @@ Creates an expander with the default recursion limit and an empty hygiene table.
 use macro_lang::Expander;
 
 let expander: Expander<char> = Expander::new();
-assert_eq!(expander.limit(), 128);
-assert_eq!(format!("{expander:?}"), "Expander { limit: 128, contexts: 0, expansions: 0 }");
+assert_eq!(expander.limit(), Expander::<char>::DEFAULT_LIMIT);
 ```
 
 ### `Expander::with_limit`
@@ -1200,6 +1214,7 @@ assert!(!a.is_root() && !b.is_root());
 ## `Origin`
 
 ```rust,ignore
+#[non_exhaustive]
 pub struct Origin {
     pub parent: Context,
     pub macro_name: Symbol,
@@ -1222,6 +1237,9 @@ Where a minted [`Context`](#context) came from, returned by
 - `call_site` — the span of the invocation that triggered the expansion.
 - `call_context` — the context of the invocation itself. Following it outward
   walks the chain of nested expansions.
+
+`#[non_exhaustive]`: only the expander builds an `Origin`, and fields may be
+added in a minor release. Read the fields directly, or destructure with `..`.
 
 **Trait implementations:** `Clone`, `Copy`, `Debug`, `PartialEq`, `Eq`, `Hash`.
 
@@ -1438,7 +1456,7 @@ assert_eq!(expander.expand(&zip, &trees("ab;c"), s, Context::ROOT),
 
 ```toml
 [dependencies]
-macro-lang = { version = "0.2", default-features = false }   # no_std + alloc
+macro-lang = { version = "1", default-features = false }   # no_std + alloc
 ```
 
 ---
@@ -1616,8 +1634,42 @@ assert_eq!(resolve(&scope, &expander, global, macro_t), Some("the global functio
 
 ## Stability
 
-macro-lang is pre-1.0. The surface documented here is the core the `1.0`
-contract will be cut from, and the roadmap's next milestone freezes it; until
-then a minor release may still change it. The error enums are
-`#[non_exhaustive]`, so new failure modes can be added without breaking a
-`match`. MSRV is Rust 1.85 and is treated as part of the compatibility surface.
+As of `1.0.0` the public API is frozen. macro-lang follows
+[Semantic Versioning](https://semver.org/); within the `1.x` series:
+
+- The **surface** will not change in a breaking way: [`Tree`](#tree)
+  (`token`, `span`), [`Pattern`](#pattern), [`Fragment`](#fragment),
+  [`Kleene`](#kleene) (`allows`), [`Template`](#template) (`token`),
+  [`Rule`](#rule), [`Macro`](#macro) (`new`, `name`),
+  [`Expander`](#expander) (`DEFAULT_LIMIT`, `new`, `with_limit`, `limit`,
+  `expand`, `origin`), [`Context`](#context) (`ROOT`, `is_root`, `as_u32`),
+  [`Origin`](#origin), [`MacroError`](#macroerror), and
+  [`ExpandError`](#expanderror). A breaking change means a new major version.
+- The **matching semantics** are part of the contract: rules are tried in
+  order and the first whose pattern matches the entire invocation wins; literal
+  tokens compare by kind only; a rule that matches in more than one way is
+  reported as `Ambiguous` and stops the search; matching never backtracks; and
+  `NoMatch` locates the furthest point any rule reached.
+- The **hygiene semantics** are part of the contract: each expansion mints
+  fresh contexts for the literal tokens and separators its template writes —
+  one context per distinct definition context — and substituted captures keep
+  their contexts unchanged; `Origin` reports the definition context, macro,
+  call site, and call context; nesting depth is read from `call_context`; and a
+  failed expansion leaves the expander unchanged. Contexts are numbered densely
+  from `0` in the order they are minted.
+- The **definition checks** in [`Macro::new`](#macronew) are fixed: a macro that
+  builds under `1.0` keeps building under every `1.x`.
+- [`Expander::DEFAULT_LIMIT`](#expanderdefault_limit) stays `128`.
+- `Pattern`, `Fragment`, `Template`, `Origin`, `MacroError`, and `ExpandError`
+  are `#[non_exhaustive]`, so new elements, fields, and failure modes are
+  additive minor changes. Match them with a wildcard arm.
+- MSRV (Rust 1.85) is a compatibility surface: raising it is a documented minor
+  change, never a patch.
+
+What is **not** promised: the exact `Display` wording of the error types, the
+`Debug` output of any type, the compiled representation of a `Macro`, and
+performance figures — the benchmarks are tracked, but they are measurements,
+not guarantees.
+
+See [`../dev/ROADMAP.md`](../dev/ROADMAP.md) and
+[`../CHANGELOG.md`](../CHANGELOG.md).

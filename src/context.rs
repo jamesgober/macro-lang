@@ -95,6 +95,10 @@ impl fmt::Display for Context {
 /// the two questions a later phase asks about a macro-introduced token: *how
 /// should its name resolve*, and *how did it get here*.
 ///
+/// The struct is `#[non_exhaustive]`: only the expander builds one, and new
+/// fields may be added in a minor release. Read the fields directly, or
+/// destructure with a trailing `..`.
+///
 /// # Examples
 ///
 /// ```
@@ -126,6 +130,7 @@ impl fmt::Display for Context {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Origin {
     /// The context the token had in the macro's definition, before this
     /// expansion marked it.

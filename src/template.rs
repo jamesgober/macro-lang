@@ -21,6 +21,10 @@ use crate::Context;
 /// with the same name at the call site. Substituted captures keep the context
 /// they arrived with; they belong to the caller.
 ///
+/// The enum is `#[non_exhaustive]` so that new kinds of template element can be
+/// added in a minor release. Constructing any variant is unaffected; code that
+/// matches on a `Template` needs a wildcard arm.
+///
 /// # Examples
 ///
 /// The template `( $($arg)+* )` — the captured arguments joined by `+`:
@@ -42,6 +46,7 @@ use crate::Context;
 /// assert_eq!(template.len(), 1);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Template<K> {
     /// A literal token, written out with a context minted for the expansion.
     Token {

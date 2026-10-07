@@ -85,6 +85,14 @@
 //! - `std` (default) — the standard library. Without it the crate is
 //!   `#![no_std]` and needs only `alloc`; expansion uses no operating-system
 //!   facilities either way.
+//!
+//! ## Stability
+//!
+//! The public surface is frozen and stable as of `1.0.0`: it follows Semantic
+//! Versioning, with no breaking changes before `2.0`. The full surface, the
+//! matching and hygiene semantics that are part of the contract, and the SemVer
+//! promise are catalogued in
+//! [`docs/API.md`](https://github.com/jamesgober/macro-lang/blob/main/docs/API.md#stability).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

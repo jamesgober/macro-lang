@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>no_std</code>-compatible (needs only <code>alloc</code>), <code>#![forbid(unsafe_code)]</code>, built on <a href="https://crates.io/crates/token-lang"><code>token-lang</code></a> and <a href="https://crates.io/crates/intern-lang"><code>intern-lang</code></a>.
     </p>
     <blockquote>
-        <strong>Status: pre-1.0, in active development.</strong> The public API is being designed across the 0.x series and frozen at <code>1.0.0</code>. See <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a> and <a href="./docs/API.md"><code>docs/API.md</code></a>.
+        <strong>1.0.0 is the API freeze.</strong> The public surface is stable and follows Semantic Versioning &mdash; no breaking changes before <code>2.0</code>. See <a href="./docs/API.md#stability"><code>docs/API.md</code></a> for the frozen-surface list and the SemVer promise, and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
     </blockquote>
 </div>
 
@@ -62,7 +62,7 @@ How an expansion treats each kind of token:
 
 ```toml
 [dependencies]
-macro-lang = "0.2"
+macro-lang = "1"
 token-lang = "1"    # Token, Span
 intern-lang = "1"   # Symbol, Interner
 ```
@@ -204,16 +204,16 @@ Three runnable examples ship in [`examples/`](./examples). They share a miniatur
 
 Patterns are compiled once, when the macro is built, into a nondeterministic automaton; matching simulates it in a single left-to-right pass over the input, merging parses that reach the same point. There is no backtracking, so cost grows linearly with input length even for adversarial patterns. Rules that must start with a fixed token are rejected on the first input entry without running the automaton. The expander keeps every working buffer between calls, so steady-state expansion allocates only the output trees.
 
-Measured with the benchmarks in [`benches/`](./benches) (Windows x86_64, Rust stable, release profile, one reused expander):
+Measured with the benchmarks in [`benches/`](./benches) (x86_64, Rust stable, release profile, one reused expander):
 
-| Benchmark | What it measures | Time |
-|---|---|---|
-| `list/8` | `$($e:tt),* => [$($e);*]` over 8 elements. | ~0.54 µs |
-| `list/512` | The same over 512 elements (≈ 52 ns per element). | ~27 µs |
-| `nested/64` | `$( ( $($x:tt)* ) )*` over 64 groups of four tokens. | ~15 µs |
-| `dispatch/rules=16` | Sixteen rules keyed by a leading token, invoking the last. | ~0.12 µs |
-| `hygiene/literals=64` | A template writing 64 literal tokens, each marked. | ~0.54 µs |
-| `identity/depth=64` | `$($t:tt)*` capturing a 64-deep nested group. | ~4.0 µs |
+| Benchmark | What it measures | Windows | Linux (WSL2) |
+|---|---|---:|---:|
+| `list/8` | `$($e:tt),* => [$($e);*]` over 8 elements. | ~0.56 µs | ~0.53 µs |
+| `list/512` | The same over 512 elements (≈ 50 ns per element). | ~27 µs | ~26 µs |
+| `nested/64` | `$( ( $($x:tt)* ) )*` over 64 groups of four tokens. | ~16 µs | ~13 µs |
+| `dispatch/rules=16` | Sixteen rules keyed by a leading token, invoking the last. | ~0.13 µs | ~0.09 µs |
+| `hygiene/literals=64` | A template writing 64 literal tokens, each marked. | ~0.56 µs | ~0.31 µs |
+| `identity/depth=64` | `$($t:tt)*` capturing a 64-deep nested group. | ~4.7 µs | ~3.2 µs |
 
 Run them yourself:
 

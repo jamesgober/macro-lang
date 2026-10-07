@@ -21,6 +21,34 @@
 
 ---
 
+## [1.0.0] - 2026-10-07
+
+API freeze. The public surface introduced in 0.2.0 is now stable and frozen
+under Semantic Versioning: no breaking changes ship before `2.0`. The only code
+change reserves room for additive growth in the definition types before the
+freeze makes that impossible.
+
+### Changed
+
+- Bumped the crate version to `1.0.0` and declared the public API stable.
+- `Pattern`, `Fragment`, and `Template` are now `#[non_exhaustive]`, so new
+  kinds of pattern element, fragment, and template element can be added in a
+  `1.x` release. Constructing any variant is unchanged; a downstream `match` on
+  these enums now needs a wildcard arm.
+- `Origin` is now `#[non_exhaustive]`, so fields can be added in a `1.x`
+  release. Reading its fields is unchanged; destructuring needs a trailing `..`.
+- `docs/API.md` marked stable with a recorded SemVer promise: the frozen
+  surface, the matching semantics (rule order, whole-input matching, kind-only
+  literal comparison, ambiguity as an error), the hygiene semantics (fresh
+  contexts for template literals, untouched captures, rollback on failure),
+  the fixed set of definition checks, the default recursion limit, and MSRV
+  1.85 as a compatibility surface.
+- Crate-level documentation gained a Stability section; the README and
+  `docs/API.md` install snippets now use `macro-lang = "1"`, and the README
+  performance table reports Windows and Linux side by side.
+
+---
+
 ## [0.2.0] - 2026-10-07
 
 The core, and the hard part of the roadmap: the scaffold becomes a working
@@ -99,6 +127,7 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jamesgober/macro-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/macro-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/macro-lang/releases/tag/v0.1.0

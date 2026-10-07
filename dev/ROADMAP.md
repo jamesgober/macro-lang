@@ -40,7 +40,20 @@ Dependency wiring, recorded under the anti-deferral rule:
   Serializing `Tree<K>` (to cache expansions, for instance) can be added later
   as an additive feature.
 
-## v1.0.0 - API freeze
+## v1.0.0 - API freeze (DONE)
 Public surface stable and frozen until 2.0.
-- [ ] docs/API.md marked stable; SemVer promise recorded.
-- [ ] Full test + benchmark suite green on all three platforms.
+- [x] docs/API.md marked stable; SemVer promise recorded.
+- [x] Full test + benchmark suite green on all three platforms.
+
+Shipped 2026-10-07. Before freezing, `Pattern`, `Fragment`, `Template`, and
+`Origin` were made `#[non_exhaustive]` so the definition language and the
+hygiene record can grow additively in 1.x (`Tree`, `Rule`, and `Kleene` stay
+exhaustive: users match on trees, build rules with struct literals, and the
+three Kleene operators are a closed set). The surface, the matching and hygiene
+semantics, the definition checks, the default recursion limit, and MSRV 1.85
+are recorded as the contract in `docs/API.md#stability`. Tests and benchmarks
+green on Windows and Linux (WSL2) locally; macOS through the CI matrix.
+
+Additive 1.x candidates (not commitments): a `serde` feature for `Tree`,
+metavariable expressions in templates (`${count(x)}`-style), and further
+`Fragment` kinds.

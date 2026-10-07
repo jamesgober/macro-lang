@@ -20,6 +20,10 @@ use intern_lang::Symbol;
 /// neither do hygiene contexts: a literal `else` in a pattern matches an `else`
 /// token whichever expansion introduced it.
 ///
+/// The enum is `#[non_exhaustive]` so that new kinds of pattern element can be
+/// added in a minor release. Constructing any variant is unaffected; code that
+/// matches on a `Pattern` needs a wildcard arm.
+///
 /// # Examples
 ///
 /// The pattern `$name:tt = ( $($arg:tt),* )` with `char` tokens:
@@ -45,6 +49,7 @@ use intern_lang::Symbol;
 /// assert_eq!(pattern.len(), 3);
 /// ```
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Pattern<K> {
     /// Matches a single token whose kind equals this one.
     Token(K),
@@ -90,6 +95,9 @@ pub enum Pattern<K> {
 /// macro system has — any single token tree — and a token-level test the
 /// language supplies, which covers specifiers like `ident` and `literal`.
 ///
+/// The enum is `#[non_exhaustive]` so that new fragment kinds can be added in a
+/// minor release; code that matches on a `Fragment` needs a wildcard arm.
+///
 /// # Examples
 ///
 /// ```
@@ -105,6 +113,7 @@ pub enum Pattern<K> {
 /// assert!(matches!(ident, Fragment::Kind(test) if test(&'x') && !test(&'1')));
 /// ```
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum Fragment<K> {
     /// Any single token tree: one token, or one whole delimited group. This is
     /// the `tt` specifier.
