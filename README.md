@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>no_std</code>-compatible (needs only <code>alloc</code>), <code>#![forbid(unsafe_code)]</code>, built on <a href="https://crates.io/crates/token-lang"><code>token-lang</code></a> and <a href="https://crates.io/crates/intern-lang"><code>intern-lang</code></a>.
     </p>
     <blockquote>
-        <strong>1.0.0 is the API freeze.</strong> The public surface is stable and follows Semantic Versioning &mdash; no breaking changes before <code>2.0</code>. See <a href="./docs/API.md#stability"><code>docs/API.md</code></a> for the frozen-surface list and the SemVer promise, and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
+        <strong>1.0.0 is the API freeze.</strong> The public surface is stable and follows Semantic Versioning &mdash; no breaking changes before <code>2.0</code>. <strong>1.1.0</strong> adds, without breaking anything, an expansion <code>Budget</code> that is on by default, depth tracking that a self-rebuilding macro cannot escape, and separators that carry their definition context. See <a href="./docs/API.md#stability"><code>docs/API.md</code></a> for the frozen-surface list and the SemVer promise, and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
     </blockquote>
 </div>
 
@@ -44,6 +44,7 @@ A handful of plain-data types and one engine:
 - A **[`Rule`](./docs/API.md#rule)** pairs a **[`Pattern`](./docs/API.md#pattern)** (what an invocation must look like) with a **[`Template`](./docs/API.md#template)** (what it expands to). Patterns bind *metavariables* — `$x:tt` — and repeat — `$( ... ),*`; templates substitute and repeat them.
 - A **[`Macro`](./docs/API.md#macro)** is a name and an ordered list of rules, validated and compiled once when it is built.
 - An **[`Expander`](./docs/API.md#expander)** runs expansions and keeps the hygiene record: every **[`Context`](./docs/API.md#context)** it mints, and the **[`Origin`](./docs/API.md#origin)** that says which expansion minted it.
+- A **[`Budget`](./docs/API.md#budget)** bounds what an expander may do — nesting depth, number of expansions, tokens written — so no macro can hang the compiler or exhaust memory. It is on by default.
 
 <br>
 
@@ -53,7 +54,7 @@ How an expansion treats each kind of token:
 |---|---|---|
 | **Literal** | Written by the template. | A context minted for this expansion. |
 | **Substituted** | Captured from the invocation by a metavariable. | Unchanged — it belongs to the caller. |
-| **Separator** | Written between template repetitions. | The expansion's minted context. |
+| **Separator** | Written between template repetitions. | The expansion's minted context, marked from the separator's definition context (root for `Template::Repeat`, `ctx` for `Template::RepeatSeparated`). |
 
 <hr>
 <br>
@@ -177,12 +178,68 @@ assert_eq!(origin.call_site, Span::new(0, 11));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+### Bounded expansion
+
+Every expander carries a [`Budget`](./docs/API.md#budget), applied automatically:
+
+| Limit | Default | Stops | Error |
+|---|---:|---|---|
+| `max_depth` | 128 | A macro that calls itself without a base case. | `ExpandError::RecursionLimit` |
+| `max_expansions` | 2<sup>20</sup> | A macro that fans out into exponentially many calls. | `ExpandError::Budget(Limit::Expansions { .. })` |
+| `max_tokens` | 2<sup>22</sup> | A macro whose output grows every round, such as one that doubles its argument. | `ExpandError::Budget(Limit::Tokens { .. })` |
+
+Expansion and token counts accumulate in the expander's `Usage` (`Expander::usage`). Tokens are charged before they are written, so an oversized expansion is refused without being built. Tighten or loosen the limits with `Expander::with_budget` / `set_budget`:
+
+```rust
+use intern_lang::Interner;
+use macro_lang::{Budget, Context, ExpandError, Expander, Limit, Macro, Rule, Template};
+use token_lang::Span;
+
+let mut names = Interner::new();
+let s = Span::new(0, 1);
+// three!() => a b c
+let three = Macro::new(names.intern("three"), vec![Rule {
+    pattern: vec![],
+    template: "abc".chars().map(|c| Template::token(c, s)).collect(),
+}])?;
+
+let mut expander = Expander::with_budget(Budget::DEFAULT.with_max_tokens(5));
+assert!(expander.expand(&three, &[], s, Context::ROOT).is_ok());
+assert_eq!(
+    expander.expand(&three, &[], s, Context::ROOT),
+    Err(ExpandError::Budget(Limit::Tokens { max: 5 })),
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+**Long-lived hosts reset per unit of work.** A batch compiler uses one expander per compilation and never resets. A language server, REPL, or watch-mode compiler that keeps one expander calls `expander.reset_usage()` before each document parse, REPL entry, or rebuild, so the budget bounds each unit of work instead of the process, and one hostile document cannot use up the budget of the next. Contexts and origins survive the reset. See `examples/budget.rs`.
+
+```rust
+use intern_lang::Interner;
+use macro_lang::{Budget, Context, Expander, Macro, Rule, Template};
+use token_lang::Span;
+
+let mut names = Interner::new();
+let s = Span::new(0, 1);
+let one = Macro::new(names.intern("one"), vec![Rule { pattern: vec![], template: vec![Template::token('k', s)] }])?;
+
+let mut expander = Expander::with_budget(Budget::DEFAULT.with_max_expansions(100));
+for _document in 0..1_000 {
+    expander.reset_usage();                     // a fresh budget per document
+    expander.expand(&one, &[], s, Context::ROOT)?;
+}
+assert_eq!(expander.usage().expansions, 1);     // 1 000 expansions, never over budget
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A driver that knows how deep each invocation sits should call [`Expander::expand_at`](./docs/API.md#expanderexpand_at) with that depth: the recursion limit then holds even for a macro that rebuilds its own invocation entirely from captured tokens, such as `m!($a:tt $b:tt) => $a $b ($a $b)` invoked as `m!(m !)`, which hygiene alone cannot tell apart from the original call. With plain `expand`, the budget stops that macro instead.
+
 <hr>
 <br>
 
 ## Examples
 
-Three runnable examples ship in [`examples/`](./examples). They share a miniature front end in [`examples/common`](./examples/common/mod.rs): a lexer, a tree builder, a parser that lowers `macro_rules!`-style text such as `($a:ident, $b:ident) => { ... }` into patterns and templates, and an expansion driver. That module is the template for wiring macro-lang into a real language.
+Four runnable examples ship in [`examples/`](./examples). They share a miniature front end in [`examples/common`](./examples/common/mod.rs): a lexer, a tree builder, a parser that lowers `macro_rules!`-style text such as `($a:ident, $b:ident) => { ... }` into patterns and templates, and an expansion driver. That module is the template for wiring macro-lang into a real language.
 
 - **Hygiene** — the classic `swap!` macro, invoked on a variable that shares its temporary's name. The output prints contexts (`tmp#2` versus the caller's `tmp`), showing that the swap stays correct.
   ```bash
@@ -195,6 +252,10 @@ Three runnable examples ship in [`examples/`](./examples). They share a miniatur
 - **Recursion** — a recursive `count!` macro expanded to a fixed point, a runaway macro stopped by the recursion limit, and an expansion backtrace built by following each context's origin outward.
   ```bash
   cargo run --example recursion
+  ```
+- **Budget** — three hostile macros stopped with no configuration: a self-rebuilding `quine!` under a depth-tracking driver (recursion limit) and under a rescanning driver (budget), and a doubling `dup!` (token budget); then a tight custom budget that still lets ordinary macros through, and a language-server loop that resets usage per document so a hostile document does not starve the next one.
+  ```bash
+  cargo run --example budget
   ```
 
 <hr>
@@ -214,6 +275,11 @@ Measured with the benchmarks in [`benches/`](./benches) (x86_64, Rust stable, re
 | `dispatch/rules=16` | Sixteen rules keyed by a leading token, invoking the last. | ~0.13 µs | ~0.09 µs |
 | `hygiene/literals=64` | A template writing 64 literal tokens, each marked. | ~0.56 µs | ~0.31 µs |
 | `identity/depth=64` | `$($t:tt)*` capturing a 64-deep nested group. | ~4.7 µs | ~3.2 µs |
+| `budget/dup/65536` | A doubling macro driven until a 2<sup>16</sup>-token budget stops it. | ~2.7 ms | not measured |
+| `budget/quine/16384` | A self-rebuilding macro under `expand`, stopped by a 2<sup>14</sup>-expansion budget. | ~2.7 ms | not measured |
+| `budget/limit=128` | The same macro under `expand_at`, stopped by the default recursion limit. | ~23 µs | not measured |
+
+The rows above the budget rows were measured at 1.0.0. Budget accounting in 1.1.0 showed no measurable cost on the hot path: a min-of-60-batches A/B against 1.0.0 on Windows put `list/512` and `nested/64` within 2% of 1.0.0 (criterion runs on the shared build machine drifted by up to 8% between two runs of the *same* 1.0.0 binary, too noisy to resolve a few percent). The budget benchmarks scale linearly with the budget: `budget/dup` and `budget/quine` each take about 4× as long for a 4× larger budget.
 
 Run them yourself:
 
@@ -233,7 +299,7 @@ Criterion writes per-benchmark reports to `target/criterion/`. Numbers vary by C
 - **Errors at definition time when possible.** `Macro::new` rejects duplicate bindings, unbound or under-repeated metavariables, repetitions that could match nothing, and template repetitions with nothing to repeat over. A macro that builds can only fail on input-dependent conditions.
 - **Ambiguity is an error.** When a rule could match an invocation in two different ways, expansion reports `ExpandError::Ambiguous` rather than guessing. Unlike rustc, the matcher still accepts patterns such as `$($t:tt)* ;` whose apparent ambiguity is resolved by the input that follows.
 - **Deep input is safe.** Flattening, matching, transcription, and rebuilding captured groups all run on explicit buffers rather than recursion, so a deeply nested invocation cannot overflow the stack inside the expander.
-- **Runaway recursion is bounded.** An invocation's depth is read from the context of its name token, so a macro that expands into itself without a base case stops with `ExpandError::RecursionLimit` (128 nested expansions by default).
+- **Runaway expansion is bounded.** An invocation's depth is the deepest of the expansions that produced its name token or any input token (and, through `expand_at`, the depth the driver tracked), so a macro that expands into itself without a base case stops with `ExpandError::RecursionLimit` (128 nested expansions by default). A default `Budget` caps total expansions and tokens, which stops doubling and fan-out bombs that never nest deeply.
 
 <hr>
 <br>

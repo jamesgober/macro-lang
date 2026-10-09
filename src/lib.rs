@@ -80,6 +80,18 @@
 //! that matches in more than one way is reported as [`ExpandError::Ambiguous`]
 //! instead of silently picking one parse.
 //!
+//! ## Bounded expansion
+//!
+//! Macros are untrusted input, and a two-line macro can describe unbounded
+//! work. Every expander enforces a [`Budget`] — a recursion limit, a cap on the
+//! number of expansions, and a cap on the number of tokens written — with
+//! defaults applied automatically, so a macro that recurses forever, doubles
+//! its argument every round, or fans out into exponentially many calls stops
+//! with [`ExpandError::RecursionLimit`] or [`ExpandError::Budget`] in bounded
+//! time and memory. A driver that knows how deep each invocation sits passes
+//! that depth to [`Expander::expand_at`], which makes the recursion limit hold
+//! even for a macro that rebuilds its own invocation from captured tokens.
+//!
 //! ## Features
 //!
 //! - `std` (default) — the standard library. Without it the crate is
@@ -117,6 +129,7 @@
 
 extern crate alloc;
 
+mod budget;
 mod compile;
 mod context;
 mod definition;
@@ -128,6 +141,7 @@ mod template;
 mod transcribe;
 mod tree;
 
+pub use budget::{Budget, Limit, Usage};
 pub use context::{Context, Origin};
 pub use definition::{Macro, Rule};
 pub use error::{ExpandError, MacroError};

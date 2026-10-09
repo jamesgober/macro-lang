@@ -265,19 +265,19 @@ fn kleene_of(tree: Option<&Tree<Kind>>) -> Option<Kleene> {
     }
 }
 
-/// After `$( ... )`: reads an optional separator and the Kleene operator,
-/// returning them and how many trees they took.
-fn repetition_suffix(rest: &[Tree<Kind>]) -> (Option<Token<Kind>>, Kleene, usize) {
+/// After `$( ... )`: reads an optional separator (with its context) and the
+/// Kleene operator, returning them and how many trees they took.
+fn repetition_suffix(rest: &[Tree<Kind>]) -> (Option<(Token<Kind>, Context)>, Kleene, usize) {
     if let Some(kleene) = kleene_of(rest.first()) {
         if kleene_of(rest.get(1)).is_none() {
             return (None, kleene, 1);
         }
     }
-    let Some(Tree::Token { token, .. }) = rest.first() else {
+    let Some(Tree::Token { token, ctx }) = rest.first() else {
         panic!("expected a separator or `*`, `+`, `?` after `$( ... )`");
     };
     let kleene = kleene_of(rest.get(1)).expect("expected `*`, `+`, or `?`");
-    (Some(*token), kleene, 2)
+    (Some((*token, *ctx)), kleene, 2)
 }
 
 fn lower_pattern(trees: &[Tree<Kind>], names: &mut Interner) -> Vec<Pattern<Kind>> {
@@ -312,7 +312,7 @@ fn lower_pattern(trees: &[Tree<Kind>], names: &mut Interner) -> Vec<Pattern<Kind
                     let (separator, kleene, used) = repetition_suffix(&trees[i + 1..]);
                     out.push(Pattern::Repeat {
                         body: lower_pattern(body, names),
-                        separator: separator.map(|t| t.kind),
+                        separator: separator.map(|(token, _)| token.kind),
                         kleene,
                     });
                     i += 1 + used;
@@ -349,9 +349,21 @@ fn lower_template(trees: &[Tree<Kind>]) -> Vec<Template<Kind>> {
                 }
                 Tree::Group { trees: body, .. } => {
                     let (separator, _kleene, used) = repetition_suffix(&trees[i + 1..]);
-                    out.push(Template::Repeat {
-                        body: lower_template(body),
-                        separator,
+                    let body = lower_template(body);
+                    // The separator keeps the context it has in the definition,
+                    // exactly like a literal token: a macro defined by another
+                    // macro's expansion marks it consistently with its other
+                    // literals.
+                    out.push(match separator {
+                        Some((separator, ctx)) => Template::RepeatSeparated {
+                            body,
+                            separator,
+                            ctx,
+                        },
+                        None => Template::Repeat {
+                            body,
+                            separator: None,
+                        },
                     });
                     i += 1 + used;
                 }
@@ -415,6 +427,49 @@ impl Driver {
             i += 1;
         }
         Ok(())
+    }
+
+    /// Expands every invocation in `trees`, which sit in code `depth`
+    /// expansions deep, expanding each output fully before splicing it.
+    ///
+    /// Unlike [`Driver::expand_all`], this driver knows where it found every
+    /// invocation, so it passes that depth to `Expander::expand_at`. That
+    /// bounds even a macro that rebuilds its own invocation entirely from
+    /// tokens it captured, which hygiene alone cannot tell apart from the
+    /// original call.
+    pub fn expand_tracked(
+        &mut self,
+        trees: Vec<Tree<Kind>>,
+        depth: u32,
+    ) -> Result<Vec<Tree<Kind>>, ExpandError> {
+        let mut out = Vec::with_capacity(trees.len());
+        let mut i = 0;
+        while i < trees.len() {
+            if let Some((name, ctx, span, args)) = self.invocation(&trees[i..]) {
+                let mac = &self.macros[&name];
+                let expanded = self.expander.expand_at(mac, &args, span, ctx, depth)?;
+                out.extend(self.expand_tracked(expanded, depth + 1)?);
+                i += 3;
+                continue;
+            }
+            match &trees[i] {
+                Tree::Group {
+                    open,
+                    close,
+                    trees: inner,
+                } => {
+                    let inner = self.expand_tracked(inner.clone(), depth)?;
+                    out.push(Tree::Group {
+                        open: *open,
+                        close: *close,
+                        trees: inner,
+                    });
+                }
+                other => out.push(other.clone()),
+            }
+            i += 1;
+        }
+        Ok(out)
     }
 
     /// Recognizes `name ! ( args )` at the start of `trees`.

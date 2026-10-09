@@ -53,11 +53,13 @@ pub(crate) enum Op<K> {
     Var(usize),
     /// Start a repetition. `end` is the index of its matching [`Op::End`];
     /// `locks` is the range of [`CompiledRule::locks`] holding the slots whose
-    /// capture counts decide how many times it runs.
+    /// capture counts decide how many times it runs; `separator` is written
+    /// between iterations and marked like a literal token defined in its
+    /// context.
     Repeat {
         end: usize,
         locks: (usize, usize),
-        separator: Option<Token<K>>,
+        separator: Option<(Token<K>, Context)>,
     },
     /// Finish one iteration of the repetition that starts at op `start`.
     End { start: usize },
@@ -345,16 +347,15 @@ fn compile_template<K>(
                 out.ops.push(Op::Var(slot));
             }
             TemplateWork::Element(Template::Repeat { body, separator }) => {
-                let start = out.ops.len();
-                out.ops.push(Op::Repeat {
-                    end: 0,
-                    locks: (0, 0),
-                    separator,
-                });
-                open.push(Vec::new());
-                work.push(TemplateWork::End { start });
-                work.extend(body.into_iter().rev().map(TemplateWork::Element));
+                // A plain `Repeat` separator is defined in the root context.
+                let separator = separator.map(|token| (token, Context::ROOT));
+                open_repeat(body, separator, &mut open, &mut work, out);
             }
+            TemplateWork::Element(Template::RepeatSeparated {
+                body,
+                separator,
+                ctx,
+            }) => open_repeat(body, Some((separator, ctx)), &mut open, &mut work, out),
             TemplateWork::End { start } => {
                 let locks = open.pop().unwrap_or_default();
                 if locks.is_empty() {
@@ -377,4 +378,24 @@ fn compile_template<K>(
         }
     }
     Ok(())
+}
+
+/// Emits the opening of a template repetition (its end and lockstep range are
+/// patched when its [`TemplateWork::End`] is reached) and queues its body.
+fn open_repeat<K>(
+    body: Vec<Template<K>>,
+    separator: Option<(Token<K>, Context)>,
+    open: &mut Vec<Vec<usize>>,
+    work: &mut Vec<TemplateWork<K>>,
+    out: &mut CompiledRule<K>,
+) {
+    let start = out.ops.len();
+    out.ops.push(Op::Repeat {
+        end: 0,
+        locks: (0, 0),
+        separator,
+    });
+    open.push(Vec::new());
+    work.push(TemplateWork::End { start });
+    work.extend(body.into_iter().rev().map(TemplateWork::Element));
 }

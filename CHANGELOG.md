@@ -21,6 +21,91 @@
 
 ---
 
+## [1.1.0] - 2026-10-08
+
+Termination and resource bounds. Every expander now enforces a budget, on by
+default, so no macro can hang a compiler or exhaust its memory; the recursion
+limit can no longer be escaped by a macro that rebuilds its own invocation; and
+repetition separators are marked from their definition context like every
+other template literal. All API changes are additive: code that builds against
+1.0 builds unchanged.
+
+### Added
+
+- `Budget { max_depth, max_expansions, max_tokens }` (`#[non_exhaustive]`), with
+  `Budget::DEFAULT` (depth 128, `2^20` expansions, `2^22` tokens),
+  `Default`, and the `const` builders `with_max_depth`, `with_max_expansions`,
+  and `with_max_tokens`. Expansion and token counts accumulate until
+  `Expander::reset_usage`; tokens are counted one per token, two per group, plus every token
+  of a substituted capture, and are charged *before* they are written, so an
+  oversized expansion is refused without being built.
+- `Limit` (`#[non_exhaustive]`: `Expansions { max }`, `Tokens { max }`) and
+  `ExpandError::Budget(Limit)`, reported when a budget runs out. A failed
+  expansion is not charged and leaves the expander unchanged, as before.
+- `Usage { expansions, tokens }` (`#[non_exhaustive]`, `Usage::NONE`),
+  `Expander::usage()`, and `Expander::reset_usage()`, which zeroes the counters
+  and leaves the budget and all hygiene state untouched. A long-lived host (a
+  language server, a REPL, a watch-mode compiler) calls it once per unit of
+  work so the budget bounds each document, entry, or rebuild rather than the
+  process.
+- `Expander::with_budget`, `Expander::budget`, and `Expander::set_budget`.
+  `Expander::new` and `Expander::with_limit` apply `Budget::DEFAULT`
+  (with the given depth), so existing users are protected without code changes.
+- `Expander::expand_at(mac, input, call_site, call_context, depth)`: `expand`
+  for a driver that knows how deep in nested expansion it found the invocation.
+  With it the recursion limit bounds every chain of nested expansions,
+  whatever tokens the macros reuse.
+- `Template::RepeatSeparated { body, separator, ctx }`: a separated repetition
+  whose separator carries its definition context, for front ends lowering a
+  macro definition that an earlier expansion produced.
+- `examples/budget.rs` (hostile macros stopped by the defaults), a depth-tracking
+  driver `Driver::expand_tracked` in `examples/common`, `tests/budget.rs`
+  (regressions for every reported shape plus three property tests), and the
+  `budget/*` benchmarks showing that the cost of an expansion bomb is linear in
+  the budget.
+
+### Changed
+
+- An invocation's nesting depth is now one more than the deepest of: the
+  driver's `depth` (`0` through `expand`), the expansion that produced
+  `call_context`, and the expansions that produced **any token of its input**.
+  1.0 read `call_context` alone. Depth can only be higher than 1.0 computed,
+  never lower; for ordinary recursive macros it is unchanged.
+- The steady-state benchmarks run on an expander with the expansion and token caps lifted,
+  since a benchmark loop performs far more expansions than a compilation.
+  Budget accounting showed no measurable hot-path cost (min-of-batches A/B
+  against 1.0.0 on Windows: within 2%); a repetition's separator context is
+  now looked up once per repetition instead of once per separator.
+- `examples/common` lowers repetition separators with their contexts
+  (`Template::RepeatSeparated`).
+
+### Fixed
+
+- Repetition separators can now be marked from their definition context. With
+  `Template::RepeatSeparated`, a separator shares the context the expansion
+  mints for the other literals of its definition and `Origin::parent` reports
+  that definition context; 1.0 always marked separators as if defined in the
+  root context, which split a macro-defined macro's separators off from its
+  other literals. `Template::Repeat` keeps its documented root-context
+  separator (exact for macros written in source).
+
+### Security
+
+- **Recursion-limit bypass (H07).** A macro that rebuilt its own invocation
+  from captured tokens (for example `m!($a:tt $b:tt) => $a $b ($a $b)` invoked
+  as `m!(m !)`) restarted at depth 1 every round and looped forever. Depth now
+  also follows the input tokens, `expand_at` lets a driver track depth
+  independently of hygiene (closing the case where every token is captured
+  from source), and the default budget bounds the remaining case under plain
+  `expand`.
+- **Expansion bombs (H08).** Nothing bounded total output: a doubling macro
+  reached `2^depth` tokens, and a fan-out macro `2^depth` expansions, within
+  the recursion limit. The default `Budget` stops both in bounded time and
+  memory (the doubling macro in `examples/budget`: about 0.2 s and a 400 MB
+  whole-process peak in a release build).
+
+---
+
 ## [1.0.0] - 2026-10-07
 
 API freeze. The public surface introduced in 0.2.0 is now stable and frozen
@@ -127,7 +212,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jamesgober/macro-lang/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jamesgober/macro-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/macro-lang/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/macro-lang/releases/tag/v0.1.0

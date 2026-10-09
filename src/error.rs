@@ -5,6 +5,8 @@ use core::fmt;
 use intern_lang::Symbol;
 use token_lang::Span;
 
+use crate::Limit;
+
 /// Why [`Macro::new`](crate::Macro::new) rejected a macro definition.
 ///
 /// Every check that can be made without an invocation is made when the macro is
@@ -181,14 +183,28 @@ pub enum ExpandError {
         /// Index of the rule that matched.
         rule: usize,
     },
-    /// The invocation is nested deeper than the expander's recursion limit —
-    /// almost always a macro that expands to an invocation of itself without a
-    /// base case. Fix the macro, or raise the limit with
+    /// The invocation is nested deeper than the expander's recursion limit
+    /// ([`Budget::max_depth`](crate::Budget::max_depth)) — almost always a
+    /// macro that expands to an invocation of itself without a base case. Fix
+    /// the macro, or raise the limit with
     /// [`Expander::with_limit`](crate::Expander::with_limit).
     RecursionLimit {
         /// The limit that was exceeded.
         limit: u32,
     },
+    /// The expander has used up part of its [`Budget`](crate::Budget): it has
+    /// already performed [`max_expansions`](crate::Budget::max_expansions)
+    /// expansions, or this one would take the number of tokens written past
+    /// [`max_tokens`](crate::Budget::max_tokens). Almost always a macro whose
+    /// output grows without bound, such as one that doubles its argument on
+    /// every round, or one that expands into several calls of itself. Fix the
+    /// macro, or raise the budget with
+    /// [`Expander::set_budget`](crate::Expander::set_budget). A long-lived host
+    /// should call [`Expander::reset_usage`](crate::Expander::reset_usage) once
+    /// per unit of work, or legitimate input eventually exhausts the budget.
+    ///
+    /// Added in 1.1.0.
+    Budget(Limit),
     /// The expander has minted all `u32::MAX` hygiene contexts it can address.
     /// Contexts are never reclaimed, so this takes billions of expansions;
     /// start a fresh [`Expander`](crate::Expander).
@@ -208,6 +224,9 @@ impl fmt::Display for ExpandError {
             ),
             Self::RecursionLimit { limit } => {
                 write!(f, "macro expansion exceeded the recursion limit of {limit}")
+            }
+            Self::Budget(limit) => {
+                write!(f, "macro expansion exceeded its budget of {limit}")
             }
             Self::ContextOverflow => f.write_str("hygiene context space exhausted"),
         }
@@ -289,6 +308,14 @@ mod tests {
             ExpandError::ContextOverflow
                 .to_string()
                 .contains("exhausted")
+        );
+        assert_eq!(
+            ExpandError::Budget(Limit::Tokens { max: 64 }).to_string(),
+            "macro expansion exceeded its budget of 64 output tokens"
+        );
+        assert_eq!(
+            ExpandError::Budget(Limit::Expansions { max: 3 }).to_string(),
+            "macro expansion exceeded its budget of 3 expansions"
         );
     }
 

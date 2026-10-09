@@ -93,6 +93,11 @@ pub(crate) enum Outcome {
 pub(crate) struct Matcher<K> {
     /// The flattened invocation.
     pub(crate) flat: Vec<Flat<K>>,
+    /// Whether any token of the invocation carries a non-root context — one an
+    /// expansion produced. Set while flattening (a branch-free OR), so the
+    /// expander scans the input for its depth only when there is something to
+    /// find: source input, the common case, costs nothing.
+    pub(crate) marked: bool,
     /// Threads arriving at the position being processed.
     current: Vec<Thread>,
     /// Threads arriving at the following position.
@@ -126,6 +131,7 @@ impl<K> Default for Matcher<K> {
     fn default() -> Self {
         Self {
             flat: Vec::new(),
+            marked: false,
             current: Vec::new(),
             next: Vec::new(),
             deferred: Vec::new(),
@@ -148,14 +154,18 @@ impl<K: Clone> Matcher<K> {
     /// nested input cannot overflow the stack.
     pub(crate) fn load(&mut self, input: &[Tree<K>]) {
         self.flat.clear();
+        self.marked = false;
         let mut parents: Vec<(core::slice::Iter<'_, Tree<K>>, usize)> = Vec::new();
         let mut trees = input.iter();
         loop {
             match trees.next() {
-                Some(Tree::Token { token, ctx }) => self.flat.push(Flat::Leaf {
-                    token: token.clone(),
-                    ctx: *ctx,
-                }),
+                Some(Tree::Token { token, ctx }) => {
+                    self.marked |= !ctx.is_root();
+                    self.flat.push(Flat::Leaf {
+                        token: token.clone(),
+                        ctx: *ctx,
+                    });
+                }
                 Some(Tree::Group {
                     open,
                     close,
@@ -188,21 +198,44 @@ impl<K: Clone> Matcher<K> {
         }
     }
 
-    /// Rebuilds the tree starting at flat index `at` and appends it to `out`.
+    /// Rebuilds the tree starting at flat index `at` and appends it to `out`,
+    /// provided its size in tokens — both delimiters of every group counted,
+    /// which is exactly the flat entries it spans — is at most `*left`. The
+    /// size is taken from `*left`. Returns `false`, writing nothing, if the
+    /// tree does not fit, so an oversized capture is never copied.
     ///
-    /// Iterative for the same reason as [`Matcher::load`].
-    pub(crate) fn emit(&self, at: usize, out: &mut Vec<Tree<K>>) {
-        let end = match self.flat.get(at) {
+    /// The single-token case is inlined into the transcription loop; a group
+    /// is rebuilt out of line, iteratively for the same reason as
+    /// [`Matcher::load`].
+    #[inline]
+    pub(crate) fn emit(&self, at: usize, out: &mut Vec<Tree<K>>, left: &mut usize) -> bool {
+        match self.flat.get(at) {
             Some(Flat::Leaf { token, ctx }) => {
+                let Some(rest) = left.checked_sub(1) else {
+                    return false;
+                };
+                *left = rest;
                 out.push(Tree::Token {
                     token: token.clone(),
                     ctx: *ctx,
                 });
-                return;
+                true
             }
-            Some(Flat::Open { end, .. }) => *end,
-            Some(Flat::Close { .. }) | None => return,
-        };
+            Some(Flat::Open { end, .. }) => {
+                let Some(rest) = left.checked_sub(end.saturating_sub(at) + 1) else {
+                    return false;
+                };
+                *left = rest;
+                self.emit_group(at, *end, out);
+                true
+            }
+            // A capture always starts at a token or a group opening.
+            Some(Flat::Close { .. }) | None => true,
+        }
+    }
+
+    /// Rebuilds the group spanning flat entries `at..=end` into `out`.
+    fn emit_group(&self, at: usize, end: usize, out: &mut Vec<Tree<K>>) {
         let mut groups: Vec<OpenGroup<K>> = Vec::new();
         for entry in self.flat.get(at..=end).unwrap_or(&[]) {
             match entry {
@@ -232,6 +265,16 @@ impl<K: Clone> Matcher<K> {
 }
 
 impl<K> Matcher<K> {
+    /// The contexts of the invocation's tokens, in order; group delimiters
+    /// carry none.
+    #[inline]
+    pub(crate) fn contexts(&self) -> impl Iterator<Item = Context> + '_ {
+        self.flat.iter().filter_map(|entry| match entry {
+            Flat::Leaf { ctx, .. } => Some(*ctx),
+            Flat::Open { .. } | Flat::Close { .. } => None,
+        })
+    }
+
     /// The span to blame when matching got no further than `position`: the
     /// entry there, or an empty span just past the input (falling back to
     /// `call_site` for an empty invocation).
@@ -602,6 +645,31 @@ mod tests {
     }
 
     #[test]
+    fn test_emit_charges_tokens_and_delimiters() {
+        let input = vec![
+            leaf(1, 0),
+            group(8, 9, vec![leaf(2, 2), group(8, 9, vec![], 3)], 1),
+        ];
+        let mut matcher = Matcher::default();
+        matcher.load(&input);
+        let mut out = Vec::new();
+        // The group is five tokens: it does not fit in four.
+        let mut left = 4;
+        assert!(!matcher.emit(1, &mut out, &mut left));
+        assert_eq!((left, out.len()), (4, 0));
+        assert!(matcher.emit(0, &mut out, &mut left));
+        assert_eq!(left, 3);
+        let mut left = 5;
+        assert!(matcher.emit(1, &mut out, &mut left));
+        assert_eq!(left, 0);
+        assert_eq!(out, input);
+        // A leaf does not fit in nothing.
+        assert!(!matcher.emit(0, &mut out, &mut left));
+        // Source tokens carry the root context, which is not collected.
+        assert!(!matcher.marked);
+    }
+
+    #[test]
     fn test_emit_rebuilds_nested_group() {
         let input = vec![group(
             8,
@@ -612,7 +680,8 @@ mod tests {
         let mut matcher = Matcher::default();
         matcher.load(&input);
         let mut out = Vec::new();
-        matcher.emit(0, &mut out);
+        let mut left = usize::MAX;
+        assert!(matcher.emit(0, &mut out, &mut left));
         assert_eq!(out, input);
     }
 
