@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>no_std</code>-compatible (needs only <code>alloc</code>), <code>#![forbid(unsafe_code)]</code>, built on <a href="https://crates.io/crates/token-lang"><code>token-lang</code></a> and <a href="https://crates.io/crates/intern-lang"><code>intern-lang</code></a>.
     </p>
     <blockquote>
-        <strong>1.0.0 is the API freeze.</strong> The public surface is stable and follows Semantic Versioning &mdash; no breaking changes before <code>2.0</code>. <strong>1.1.0</strong> adds, without breaking anything, an expansion <code>Budget</code> that is on by default, depth tracking that a self-rebuilding macro cannot escape, and separators that carry their definition context. See <a href="./docs/API.md#stability"><code>docs/API.md</code></a> for the frozen-surface list and the SemVer promise, and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
+        <strong>1.0.0 is the API freeze.</strong> The public surface is stable and follows Semantic Versioning &mdash; no breaking changes before <code>2.0</code>. <strong>1.1.0</strong> adds, without breaking anything, an expansion <code>Budget</code> that is on by default, depth tracking that a self-rebuilding macro cannot escape, and separators that carry their definition context. <strong>1.2.0</strong> makes token trees safe to clone, compare and hash at any nesting depth, adds <code>Tree::dismantle</code> for dropping very deep trees, and stops a failed expansion of a deeply nested argument from overflowing the stack. See <a href="./docs/API.md#stability"><code>docs/API.md</code></a> for the frozen-surface list and the SemVer promise, and <a href="./CHANGELOG.md"><code>CHANGELOG.md</code></a>.
     </blockquote>
 </div>
 

@@ -21,6 +21,38 @@
 
 ---
 
+## [1.2.0] - 2026-11-12
+
+Token trees nested very deeply no longer overflow the stack in the expander or
+when cloned, compared or hashed. Code that builds against 1.1 builds unchanged.
+
+### Added
+
+- `Tree::dismantle`, which drops trees with a heap stack. A plain drop of a
+  `Tree` still recurses once per level of nesting, because its fields are
+  public and callers move them out by value, so it can't get a custom `Drop`
+  in 1.x. Front ends that build trees from untrusted text should cap group
+  nesting, or hand finished trees to `dismantle`.
+
+### Changed
+
+- `Tree`'s `Clone`, `PartialEq` and `Hash` are now written by hand and walk the
+  tree with a heap stack instead of recursing. They behave exactly like the
+  derived versions, and `Hash` feeds the hasher the same values in the same
+  order. `Debug` is still derived and still recurses.
+- The `Expander::reset_usage` docs now say plainly that the hygiene table keeps
+  growing with every expansion, and that a long-lived host should use one
+  expander per compilation or document version.
+
+### Fixed
+
+- An expansion that failed after writing part of a deeply nested capture (for
+  example by running out of its token budget) dropped the partial output
+  recursively and could overflow the stack. The partial output is now taken
+  apart with a heap stack.
+
+---
+
 ## [1.1.0] - 2026-10-08
 
 Termination and resource bounds. Every expander now enforces a budget, on by
@@ -212,7 +244,8 @@ Initial scaffold and repository bootstrap. No domain logic yet &mdash; this rele
 - `.github/workflows/ci.yml` CI matrix; `deny.toml`, `clippy.toml`, `rustfmt.toml`.
 - `dev/DIRECTIVES.md` and `dev/ROADMAP.md` (committed engineering standards + plan).
 
-[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jamesgober/macro-lang/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jamesgober/macro-lang/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jamesgober/macro-lang/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jamesgober/macro-lang/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jamesgober/macro-lang/compare/v0.1.0...v0.2.0

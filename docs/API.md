@@ -23,6 +23,7 @@
 - [`Tree`](#tree)
   - [`Tree::token`](#treetoken)
   - [`Tree::span`](#treespan)
+  - [`Tree::dismantle`](#treedismantle)
 - [`Pattern`](#pattern)
 - [`Fragment`](#fragment)
 - [`Kleene`](#kleene)
@@ -269,6 +270,16 @@ A token tree: a single token with its hygiene context, or a delimited group.
 **Trait implementations:** `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash` (each
 where `K` implements it).
 
+**Deep trees.** Since 1.2.0, `Clone`, `PartialEq` and `Hash` walk a tree with a
+heap stack, so they work at any nesting depth, and so does everything the
+expander does with the trees it is given and returns. They behave exactly as the
+derived impls did, and `Hash` feeds the hasher the same values. Dropping a tree
+and `Debug` still recurse once per level, as for any recursive Rust type: the
+fields are public and callers move them out by value, so `Tree` can't have a
+custom `Drop` in 1.x. A front end that builds trees from untrusted text should
+cap group nesting while building them, or pass finished trees to
+[`Tree::dismantle`](#treedismantle) instead of dropping them.
+
 Building the trees for `f(a, b)`:
 
 ```rust
@@ -367,6 +378,31 @@ let group: Tree<char> = Tree::Group {
 };
 assert_eq!(group.span(), Span::new(10, 15));
 assert_eq!(Tree::token('x', Span::new(2, 3)).span(), Span::new(2, 3));
+```
+
+### `Tree::dismantle`
+
+```rust,ignore
+pub fn dismantle(trees: impl IntoIterator<Item = Tree<K>>)
+```
+
+*Added in 1.2.0.* Drops `trees` with a heap stack instead of recursion, so a
+tree nested any number of levels deep can be thrown away without overflowing
+the stack. Pass one tree as `[tree]`, or the `Vec` an expansion returns.
+
+```rust
+use macro_lang::Tree;
+use token_lang::{Span, Token};
+
+let mut tree = Tree::token('x', Span::new(0, 1));
+for _ in 0..100_000 {
+    tree = Tree::Group {
+        open: Token::new('(', Span::new(0, 1)),
+        close: Token::new(')', Span::new(0, 1)),
+        trees: vec![tree],
+    };
+}
+Tree::dismantle([tree]);
 ```
 
 ---
@@ -1182,9 +1218,15 @@ not usage) is not reset either. This is how a long-lived host — a language
 server, a REPL, a watch-mode compiler — keeps the budget per unit of work
 rather than per process: it calls `reset_usage()` once per document parse, per
 REPL entry, or per compilation (see
-[bounding untrusted macros](#guide-bounding-untrusted-macros)). The hygiene
-table still only grows; after billions of expansions a host sees
-`ExpandError::ContextOverflow` and starts a fresh expander.
+[bounding untrusted macros](#guide-bounding-untrusted-macros)).
+
+Because minted contexts stay valid, the hygiene table is not shrunk: it keeps a
+record of every expansion and context since the expander was created, and its
+memory grows with every expansion whether or not usage is reset. A long-lived
+host should use one expander per compilation (per document version in a
+language server) and drop it with the trees it produced, rather than keep one
+expander for the whole session. An expander kept for billions of expansions
+eventually reports `ExpandError::ContextOverflow`.
 
 ```rust
 use intern_lang::Interner;
@@ -2247,9 +2289,12 @@ As of `1.0.0` the public API is frozen. macro-lang follows
   [`Usage`](#usage) (`NONE`), and `Expander::with_budget`, `budget`,
   `set_budget`, `usage`, `reset_usage`, and `expand_at`. These are
   part of the frozen surface from 1.1.0 on.
+- **Added in 1.2.0**: [`Tree::dismantle`](#treedismantle). `Tree`'s `Clone`,
+  `PartialEq` and `Hash` became hand-written, heap-stack versions with the same
+  behavior as the derived ones.
 
 - The **surface** will not change in a breaking way: [`Tree`](#tree)
-  (`token`, `span`), [`Pattern`](#pattern), [`Fragment`](#fragment),
+  (`token`, `span`, `dismantle`), [`Pattern`](#pattern), [`Fragment`](#fragment),
   [`Kleene`](#kleene) (`allows`), [`Template`](#template) (`token`),
   [`Rule`](#rule), [`Macro`](#macro) (`new`, `name`),
   [`Expander`](#expander) (`DEFAULT_LIMIT`, `new`, `with_limit`, `limit`,

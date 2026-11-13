@@ -93,10 +93,32 @@ impl Meter {
 
 /// Writes the template of `ex.rule` into a new tree list. Returns the trees
 /// and the number of tokens written.
+///
+/// On failure the partial output is taken apart with [`Tree::dismantle`], so a
+/// failed expansion of a deeply nested capture cannot overflow the stack while
+/// it is thrown away.
 pub(crate) fn transcribe<K: Clone>(
     ex: Expansion<'_, K>,
     scratch: &mut Scratch<K>,
 ) -> Result<(Vec<Tree<K>>, usize), ExpandError> {
+    let mut out = Vec::new();
+    match write(ex, scratch, &mut out) {
+        Ok(written) => Ok((out, written)),
+        Err(err) => {
+            Tree::dismantle(out);
+            Tree::dismantle(scratch.groups.drain(..).flat_map(|(_, _, trees)| trees));
+            Err(err)
+        }
+    }
+}
+
+/// The body of [`transcribe`]: writes into `out` and returns the number of
+/// tokens written.
+fn write<K: Clone>(
+    ex: Expansion<'_, K>,
+    scratch: &mut Scratch<K>,
+    out: &mut Vec<Tree<K>>,
+) -> Result<usize, ExpandError> {
     let Expansion {
         rule,
         index,
@@ -115,7 +137,6 @@ pub(crate) fn transcribe<K: Clone>(
     scratch.groups.clear();
     scratch.marks.clear();
 
-    let mut out = Vec::new();
     let mut pc = 0;
     while let Some(op) = rule.ops.get(pc) {
         match op {
@@ -124,7 +145,7 @@ pub(crate) fn transcribe<K: Clone>(
                 let ctx = hygiene
                     .mark(*ctx, expansion, &mut scratch.marks)
                     .ok_or(ExpandError::ContextOverflow)?;
-                current(&mut out, &mut scratch.groups).push(Tree::Token {
+                current(out, &mut scratch.groups).push(Tree::Token {
                     token: token.clone(),
                     ctx,
                 });
@@ -138,7 +159,7 @@ pub(crate) fn transcribe<K: Clone>(
             }
             Op::Close => {
                 if let Some((open, close, trees)) = scratch.groups.pop() {
-                    current(&mut out, &mut scratch.groups).push(Tree::Group { open, close, trees });
+                    current(out, &mut scratch.groups).push(Tree::Group { open, close, trees });
                 }
             }
             Op::Var(slot) => {
@@ -152,7 +173,7 @@ pub(crate) fn transcribe<K: Clone>(
                     .ok_or(mismatch)?;
                 // Charged before the capture is cloned, so an oversized
                 // capture is refused without being copied.
-                if !matcher.emit(*at, current(&mut out, &mut scratch.groups), &mut meter.left) {
+                if !matcher.emit(*at, current(out, &mut scratch.groups), &mut meter.left) {
                     return Err(meter.exceeded());
                 }
             }
@@ -192,7 +213,7 @@ pub(crate) fn transcribe<K: Clone>(
                                     ctx
                                 }
                             };
-                            current(&mut out, &mut scratch.groups).push(Tree::Token {
+                            current(out, &mut scratch.groups).push(Tree::Token {
                                 token: separator.clone(),
                                 ctx,
                             });
@@ -206,7 +227,7 @@ pub(crate) fn transcribe<K: Clone>(
         }
         pc += 1;
     }
-    Ok((out, tokens_left.saturating_sub(meter.left)))
+    Ok(tokens_left.saturating_sub(meter.left))
 }
 
 /// The list output is currently being written to: the innermost open group, or
