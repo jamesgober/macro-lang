@@ -251,9 +251,16 @@ impl<K> Expander<K> {
     /// per compilation. The budget then bounds each unit, not the host's whole
     /// lifetime. Nothing else changes: the budget itself, every context
     /// already minted, and every [`Origin`] stay exactly as they were, so trees
-    /// produced before the reset remain valid. (The hygiene table still only
-    /// grows; a host that runs for billions of expansions eventually sees
-    /// [`ExpandError::ContextOverflow`] and must start a fresh expander.)
+    /// produced before the reset remain valid.
+    ///
+    /// Because minted contexts stay valid, the hygiene table is not shrunk:
+    /// it keeps a record for every expansion and every context minted since
+    /// the expander was created, so its memory grows with every expansion
+    /// whether or not usage is reset. A long-lived host should use one
+    /// expander per compilation (per document version in a language server)
+    /// and drop it along with the trees it produced, rather than keep one
+    /// expander for the whole session. An expander kept for billions of
+    /// expansions eventually reports [`ExpandError::ContextOverflow`].
     ///
     /// # Examples
     ///
